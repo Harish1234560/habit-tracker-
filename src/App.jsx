@@ -24,11 +24,21 @@ const DEFAULT_HABITS = [
   { name: "English speaking", category: "Learning", emoji: "🎙️", color: "#e879b7", target: "Speak aloud for 10 minutes" },
   { name: "Read a book", category: "Learning", emoji: "📖", color: "#2eaaa5", target: "Read for 15 minutes" },
   { name: "Drink enough water", category: "Health", emoji: "💧", color: "#49b8df", target: "Stay hydrated throughout the day" },
-  { name: "Plan tomorrow", category: "Productivity", emoji: "🗓️", color: "#e9a14b", target: "Write tomorrow’s top 3 tasks" }
+  { name: "Plan tomorrow", category: "Productivity", emoji: "🗓️", color: "#e9a14b", target: "Write tomorrow’s top 3 tasks" },
+  { name: "Meditate", category: "Mindfulness", emoji: "🧘", color: "#8b83d9", target: "Take 5 quiet minutes to reset" },
+  { name: "Get enough sleep", category: "Health", emoji: "🌙", color: "#6d9fe6", target: "Aim for a consistent bedtime" },
+  { name: "Write in a journal", category: "Mindfulness", emoji: "📝", color: "#c77dbb", target: "Reflect on one thing from today" },
+  { name: "Take a screen break", category: "Health", emoji: "🌱", color: "#63ad7c", target: "Step away from screens for 10 minutes" }
 ];
 
+const PARTICIPANT_USERNAMES = ["Harish", "SHYAM"];
+const AUTH_EMAIL_DOMAIN = "winterarc.invalid";
 const PALETTE = ["#25865a", "#63ad7c", "#e8b34b", "#6d9fe6", "#c77dbb", "#48aaa3", "#e78b63", "#8b83d9"];
 const today = new Date();
+
+function usernameToAuthEmail(username) {
+  return `${username.trim().toLowerCase()}@${AUTH_EMAIL_DOMAIN}`;
+}
 
 function localDateKey(date) {
   return format(date, "yyyy-MM-dd");
@@ -65,7 +75,8 @@ function App() {
   const [selectedDay, setSelectedDay] = useState(today);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingHabit, setEditingHabit] = useState(null);
-  const [habitForm, setHabitForm] = useState({ name: "", category: "Personal", emoji: "✨", target: "" });
+  const [habitForm, setHabitForm] = useState({ name: "", category: "Personal", emoji: "✨", target: "", cadence: "daily", weekly_target: 3 });
+  const [members, setMembers] = useState([]);
   const [habitError, setHabitError] = useState("");
   const [toast, setToast] = useState("");
 
@@ -101,23 +112,31 @@ function App() {
     if (!user) return;
     setLoadingData(true);
     setAuthError("");
-    const [habitResult, completionResult] = await Promise.all([
-      supabase.from("habits").select("*").eq("user_id", user.id).order("created_at", { ascending: true }),
-      supabase.from("habit_completions").select("*").eq("user_id", user.id)
+    const [habitResult, completionResult, memberResult] = await Promise.all([
+      supabase.from("habits").select("*").order("created_at", { ascending: true }),
+      supabase.from("habit_completions").select("*"),
+      supabase.from("challenge_members").select("user_id, display_name")
     ]);
-    if (habitResult.error || completionResult.error) {
-      setAuthError(habitResult.error?.message || completionResult.error?.message || "Could not load your data.");
+    if (habitResult.error || completionResult.error || memberResult.error) {
+      setAuthError(habitResult.error?.message || completionResult.error?.message || memberResult.error?.message || "Could not load your data.");
       setLoadingData(false);
       return;
     }
+    setMembers(memberResult.data || []);
     let fetchedHabits = habitResult.data || [];
     if (!fetchedHabits.length) {
       const rows = DEFAULT_HABITS.map((h, i) => ({
         user_id: user.id, name: h.name, category: h.category, emoji: h.emoji,
-        color: h.color || PALETTE[i % PALETTE.length], target: h.target, active: true, sort_order: i
+        color: h.color || PALETTE[i % PALETTE.length], target: h.target,
+        cadence: "daily", weekly_target: 7, active: true, sort_order: i
       }));
       const { data, error } = await supabase.from("habits").insert(rows).select("*");
-      if (!error) fetchedHabits = data || [];
+      if (error) {
+        setAuthError(`Could not create the starter habits: ${error.message}`);
+        setLoadingData(false);
+        return;
+      }
+      fetchedHabits = data || [];
     }
     setHabits(fetchedHabits);
     const map = {};
@@ -148,6 +167,8 @@ function App() {
   }, [user, demoMode, loadData]);
 
   const activeHabits = useMemo(() => habits.filter(h => h.active !== false), [habits]);
+  const myHabits = useMemo(() => activeHabits.filter(h => !user || h.user_id === user.id), [activeHabits, user]);
+  const partnerHabits = useMemo(() => activeHabits.filter(h => user && h.user_id && h.user_id !== user.id), [activeHabits, user]);
   const monthStart = startOfMonth(selectedMonth);
   const monthEnd = endOfMonth(selectedMonth);
   const monthDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
@@ -215,17 +236,17 @@ function App() {
     e.preventDefault();
     setAuthBusy(true); setAuthError(""); setAuthMessage("");
     try {
-      if (authMode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email, password, options: { data: { full_name: fullName.trim() } }
-        });
-        if (error) throw error;
-        if (!data.session) setAuthMessage("Account created. Check your email for the confirmation link, then sign in.");
-        else setAuthMessage("Your account is ready.");
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+      const login = email.trim();
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(login);
+      const isUsername = /^[a-zA-Z0-9._-]{3,32}$/.test(login);
+      if (!isEmail && !isUsername) {
+        throw new Error("Enter a valid email address or a username (3–32 letters, numbers, dots, underscores, or hyphens).");
       }
+      const { error } = await supabase.auth.signInWithPassword({
+        email: isEmail ? login : usernameToAuthEmail(login),
+        password
+      });
+      if (error) throw error;
     } catch (error) {
       setAuthError(error.message || "Authentication failed.");
     } finally {
@@ -250,7 +271,7 @@ function App() {
     }
     setSaveState("saving");
     const { error } = await supabase.from("habit_completions").upsert({
-      user_id: user.id, habit_id: habit.id, completion_date: localDateKey(date), completed: next
+      user_id: habit.user_id || user.id, habit_id: habit.id, completion_date: localDateKey(date), completed: next
     }, { onConflict: "habit_id,completion_date" });
     if (error) {
       setCompletions(prev => ({ ...prev, [key]: !next }));
@@ -263,13 +284,13 @@ function App() {
 
   function openAddHabit() {
     setEditingHabit(null);
-    setHabitForm({ name: "", category: "Personal", emoji: "✨", target: "" });
+    setHabitForm({ name: "", category: "Personal", emoji: "✨", target: "", cadence: "daily", weekly_target: 3 });
     setHabitError("");
     setModalOpen(true);
   }
   function openEditHabit(habit) {
     setEditingHabit(habit);
-    setHabitForm({ name: habit.name, category: habit.category || "Personal", emoji: habit.emoji || "✨", target: habit.target || "" });
+    setHabitForm({ name: habit.name, category: habit.category || "Personal", emoji: habit.emoji || "✨", target: habit.target || "", cadence: habit.cadence || "daily", weekly_target: habit.weekly_target || 3 });
     setHabitError("");
     setModalOpen(true);
   }
@@ -277,12 +298,12 @@ function App() {
     e.preventDefault();
     const name = habitForm.name.trim();
     if (!name) { setHabitError("Add a name for your habit."); return; }
-    if (habits.some(h => h.name.toLowerCase() === name.toLowerCase() && h.id !== editingHabit?.id)) {
+    if (habits.some(h => (h.user_id === user?.id || !user) && h.name.toLowerCase() === name.toLowerCase() && h.id !== editingHabit?.id)) {
       setHabitError("You already have a habit with that name."); return;
     }
     const payload = {
       name, category: habitForm.category, emoji: habitForm.emoji || "✨",
-      target: habitForm.target.trim(), color: editingHabit?.color || PALETTE[habits.length % PALETTE.length],
+      target: habitForm.target.trim(), cadence: habitForm.cadence || "daily", weekly_target: habitForm.cadence === "weekly" ? Number(habitForm.weekly_target || 3) : 7, color: editingHabit?.color || PALETTE[habits.length % PALETTE.length],
       active: true, sort_order: editingHabit?.sort_order ?? habits.length
     };
     if (!user) {
@@ -326,7 +347,7 @@ function App() {
     { label: "Settings", icon: Settings }
   ];
 
-  if (authLoading) return <div className="auth-loading"><div className="brand-mark"><Leaf size={24}/></div><span>Loading your habit garden…</span></div>;
+  if (authLoading) return <div className="auth-loading"><div className="brand-mark"><Leaf size={24}/></div><span>Preparing your WinterArc space…</span></div>;
 
   if (isSupabaseConfigured && !session) {
     return <AuthScreen mode={authMode} setMode={setAuthMode} email={email} setEmail={setEmail} password={password} setPassword={setPassword} fullName={fullName} setFullName={setFullName} submitAuth={submitAuth} busy={authBusy} error={authError} message={authMessage} />;
@@ -338,7 +359,7 @@ function App() {
       <aside className={`sidebar ${mobileNavOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
           <div className="brand-mark"><Leaf size={23} fill="currentColor" /></div>
-          <div><div className="brand-name">Habit Grove</div><div className="brand-subtitle">Better habits. Bigger dreams.</div></div>
+          <div><div className="brand-name">WinterArc Challenge</div><div className="brand-subtitle">Two people. One shared challenge.</div></div>
           <button className="icon-button sidebar-close" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation"><X size={19}/></button>
         </div>
         <div className="nav-label">WORKSPACE</div>
@@ -358,8 +379,8 @@ function App() {
           <div className="quote-illustration"><span/><span/><span/><span/><span/></div>
         </div>
         <div className="sidebar-user">
-          <div className="avatar">{getInitials(user ? safeName(user) : "Habit Grove")}</div>
-          <div className="user-meta"><strong>{user ? safeName(user) : "Preview account"}</strong><span>{user?.email || "Sample data"}</span></div>
+          <div className="avatar">{getInitials(user ? safeName(user) : "WinterArc Challenge")}</div>
+          <div className="user-meta"><strong>{user ? safeName(user) : "Preview account"}</strong><span>{user ? `@${safeName(user)}` : "Sample data"}</span></div>
           <button className="icon-button" title="Sign out" onClick={signOut}><LogOut size={17}/></button>
         </div>
       </aside>
@@ -386,6 +407,7 @@ function App() {
         </header>
 
         {demoMode && <div className="demo-banner"><Sparkles size={16}/><span><strong>Interactive preview</strong> — sample data is shown. Configure Supabase to create an account and sync your habits across devices.</span><button onClick={() => document.getElementById("setup-note")?.scrollIntoView({ behavior: "smooth" })}>Setup guide <ChevronRight size={15}/></button></div>}
+        {user && <section className="winter-challenge-strip"><div className="winter-challenge-heading"><span className="winter-challenge-symbol"><Trophy size={18}/></span><div><strong>Two-person challenge</strong><small>{members.length ? `${members.length} authorized participants · shared progress` : "Apply the WinterArc shared-challenge SQL setup"}</small></div></div><div className="winter-challenge-people">{(members.length ? members : [{user_id:user.id,display_name:safeName(user)}]).slice(0,2).map((m,i)=><div className="winter-challenge-person" key={m.user_id}><span className={`participant-avatar ${i===1?"second":""}`}>{getInitials(m.display_name)}</span><span><strong>{m.display_name}</strong><small>{habits.filter(h=>h.user_id===m.user_id).length} habits · {habits.filter(h=>h.user_id===m.user_id && h.active!==false && isDone(h.id,today)).length} done today</small></span></div>)}</div></section>}
         {authError && <div className="inline-alert"><CircleHelp size={17}/><span>{authError}</span><button onClick={() => setAuthError("")}><X size={16}/></button></div>}
 
         {activeView === "Dashboard" && <DashboardView
@@ -393,14 +415,14 @@ function App() {
           setSelectedMonth={setSelectedMonth} monthDays={monthDays} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
           isDone={isDone} countOnDate={countOnDate} toggleCompletion={toggleCompletion}
           weekData={weekData} dailyTrend={dailyTrend} pieData={pieData} streak={streak}
-          openAddHabit={openAddHabit} openEditHabit={openEditHabit} loadingData={loadingData}
+          openAddHabit={openAddHabit} openEditHabit={openEditHabit} loadingData={loadingData} user={user} members={members}
           saveState={saveState} isSameMonth={isSameMonth}
         />}
-        {activeView === "My Habits" && <HabitsView habits={habits} isDone={isDone} selectedDay={selectedDay} setSelectedDay={setSelectedDay} toggleCompletion={toggleCompletion} openAddHabit={openAddHabit} openEditHabit={openEditHabit} deleteHabit={deleteHabit} toggleHabitActive={toggleHabitActive}/>}
+        {activeView === "My Habits" && <HabitsView habits={habits} currentUserId={user?.id} members={members} isDone={isDone} selectedDay={selectedDay} setSelectedDay={setSelectedDay} toggleCompletion={toggleCompletion} openAddHabit={openAddHabit} openEditHabit={openEditHabit} deleteHabit={deleteHabit} toggleHabitActive={toggleHabitActive}/>}
         {activeView === "Calendar" && <CalendarView selectedMonth={selectedMonth} setSelectedMonth={setSelectedMonth} monthDays={monthDays} selectedDay={selectedDay} setSelectedDay={setSelectedDay} activeHabits={activeHabits} countOnDate={countOnDate} isDone={isDone} toggleCompletion={toggleCompletion}/>}
         {activeView === "Statistics" && <StatisticsView monthStats={monthStats} weekData={weekData} dailyTrend={dailyTrend} pieData={pieData} activeHabits={activeHabits} selectedMonth={selectedMonth}/>}
         {activeView === "Settings" && <SettingsView user={user} darkMode={darkMode} setDarkMode={setDarkMode} signOut={signOut} demoMode={demoMode}/>}
-        <footer className="footer"><span>© {new Date().getFullYear()} Habit Grove</span><span><ShieldCheck size={14}/> Your progress, your pace.</span><span className={`save-indicator ${saveState}`}><span className="save-dot"/>{saveState === "saving" ? "Saving…" : saveState === "error" ? "Save error" : "All changes saved"}</span></footer>
+        <footer className="footer"><span>© {new Date().getFullYear()} WinterArc Challenge</span><span><ShieldCheck size={14}/> Your progress, your pace.</span><span className={`save-indicator ${saveState}`}><span className="save-dot"/>{saveState === "saving" ? "Saving…" : saveState === "error" ? "Save error" : "All changes saved"}</span></footer>
       </main>
 
       {modalOpen && <HabitModal form={habitForm} setForm={setHabitForm} onSave={saveHabit} onClose={() => setModalOpen(false)} error={habitError} editing={Boolean(editingHabit)}/>}
@@ -415,35 +437,36 @@ function viewSubtitle(view) {
     "My Habits": "Shape a routine that works for you.",
     "Calendar": "See your consistency one day at a time.",
     "Statistics": "Notice your progress and celebrate small wins.",
-    "Settings": "Make Habit Grove feel like yours."
+    "Settings": "Make your WinterArc space feel like yours."
   })[view] || "";
 }
 function CheckCircleIcon() { return <span className="toast-check"><Check size={14}/></span>; }
 
 function AuthScreen({ mode, setMode, email, setEmail, password, setPassword, fullName, setFullName, submitAuth, busy, error, message }) {
-  return <div className="auth-page">
-    <div className="auth-art">
-      <div className="auth-brand"><div className="brand-mark"><Leaf size={24} fill="currentColor"/></div><span>Habit Grove</span></div>
-      <div className="auth-art-content"><div className="auth-sparkle"><Sparkles size={22}/></div><h1>Little by little,<br/><em>a little becomes a lot.</em></h1><p>A gentle space to build routines, track progress, and become the person you want to be.</p>
-        <div className="auth-stat"><div className="auth-stat-icon"><TrendingUp size={20}/></div><div><strong>Progress, not perfection.</strong><span>Your next small step starts today.</span></div></div>
+  return <div className="auth-page winter-auth-page">
+    <div className="auth-art winter-auth-art">
+      <div className="auth-brand"><div className="brand-mark"><Sparkles size={23}/></div><span>WinterArc <b>Challenge</b></span></div>
+      <div className="auth-art-content"><div className="auth-sparkle"><Sparkles size={22}/></div><div className="winter-kicker">THE CONSISTENCY CHALLENGE</div><h1>Small steps.<br/><em>Stronger seasons.</em></h1><p>A focused space for two participants to build better routines, keep their promises, and make progress visible—one day at a time.</p>
+        <div className="winter-participants">{PARTICIPANT_USERNAMES.map((name, index) => <div className="winter-participant" key={name}><span className={`participant-avatar ${index === 1 ? "second" : ""}`}>{getInitials(name)}</span><span><strong>{name}</strong><small>Personal progress</small></span></div>)}</div>
+        <div className="winter-auth-note"><ShieldCheck size={16}/><span>Private sign-in · Built for two participants</span></div>
       </div>
       <div className="auth-art-bottom"><span/><span/><span/><span/><span/><span/><span/></div>
     </div>
-    <div className="auth-panel"><div className="auth-form-wrap">
-      <div className="mobile-auth-brand"><div className="brand-mark"><Leaf size={23}/></div><strong>Habit Grove</strong></div>
-      <div className="eyebrow">YOUR PERSONAL HABIT SPACE</div>
-      <h2>{mode === "signin" ? "Welcome back" : "Create your account"}</h2>
-      <p className="auth-lede">{mode === "signin" ? "Pick up where you left off. Your progress is waiting." : "Start a calmer, more consistent routine today."}</p>
+    <div className="auth-panel winter-auth-panel"><div className="auth-form-wrap">
+      <div className="mobile-auth-brand"><div className="brand-mark"><Sparkles size={21}/></div><strong>WinterArc Challenge</strong></div>
+      <div className="eyebrow">YOUR NEXT CHAPTER STARTS HERE</div>
+      <h2>Welcome back</h2>
+      <p className="auth-lede">Sign in to continue your habits and track your WinterArc progress.</p>
+      <div className="winter-profile-prompt"><span className="winter-profile-icon"><UserRound size={18}/></span><span><strong>Sign in with username or email</strong><small>Only the two configured participant accounts can access this challenge.</small></span></div>
+      <div className="winter-profile-cards">{PARTICIPANT_USERNAMES.map((name, index) => <div className="winter-profile-card" key={name}><span className={`participant-avatar ${index === 1 ? "second" : ""}`}>{getInitials(name)}</span><span><strong>{name}</strong><small>Enter username or account email</small></span><ChevronRight size={17}/></div>)}</div>
       <form onSubmit={submitAuth} className="auth-form">
-        {mode === "signup" && <label>Your name<input value={fullName} onChange={e => setFullName(e.target.value)} placeholder="e.g. Harish" autoComplete="name" required/></label>}
-        <label>Email address<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required/></label>
-        <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 6 characters" autoComplete={mode === "signin" ? "current-password" : "new-password"} minLength={6} required/></label>
+        <label>Username or email<input type="text" value={email} onChange={e => setEmail(e.target.value)} placeholder="Username or account email" autoComplete="username" maxLength={254} required/></label>
+        <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password" autoComplete="current-password" minLength={6} required/></label>
         {error && <div className="form-error">{error}</div>}
         {message && <div className="form-success">{message}</div>}
-        <button className="primary-button auth-submit" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}<ChevronRight size={17}/></button>
+        <button className="primary-button auth-submit" disabled={busy}>{busy ? "Signing in…" : "Enter WinterArc"}<ChevronRight size={17}/></button>
       </form>
-      <div className="auth-switch">{mode === "signin" ? "New to Habit Grove?" : "Already have an account?"} <button onClick={() => setMode(mode === "signin" ? "signup" : "signin")}>{mode === "signin" ? "Create an account" : "Sign in"}</button></div>
-      <div className="auth-secure"><ShieldCheck size={15}/> Your account and habit data are private.</div>
+      <div className="auth-secure"><ShieldCheck size={15}/> No public registration. Access requires an authorized account.</div>
     </div></div>
   </div>;
 }
@@ -458,7 +481,7 @@ function StatCard({ icon: Icon, label, value, detail, color = "green", progress,
   </div>;
 }
 
-function DashboardView({ activeHabits, habits, monthStats, selectedMonth, setSelectedMonth, monthDays, selectedDay, setSelectedDay, isDone, countOnDate, toggleCompletion, weekData, dailyTrend, pieData, streak, openAddHabit, openEditHabit, loadingData, saveState }) {
+function DashboardView({ activeHabits, habits, monthStats, selectedMonth, setSelectedMonth, monthDays, selectedDay, setSelectedDay, isDone, countOnDate, toggleCompletion, weekData, dailyTrend, pieData, streak, openAddHabit, openEditHabit, loadingData, saveState, user, members }) {
   const todayHabits = activeHabits;
   const completedToday = countOnDate(today);
   const topHabit = [...monthStats.perHabit].sort((a,b) => b.rate - a.rate)[0];
@@ -484,7 +507,7 @@ function DashboardView({ activeHabits, habits, monthStats, selectedMonth, setSel
         </div>
         <div className="selected-day-row"><div><strong>{isSameDay(selectedDay, today) ? "Today's habits" : format(selectedDay, "EEEE, MMM d")}</strong><span>{countOnDate(selectedDay)} of {activeHabits.length} completed</span></div><div className="tiny-progress"><span style={{ width: `${percent(countOnDate(selectedDay), activeHabits.length)}%` }}/></div></div>
         <div className="habit-list">
-          {activeHabits.slice(0, 8).map((habit, i) => <HabitRow key={habit.id} habit={habit} done={isDone(habit.id, selectedDay)} onToggle={() => toggleCompletion(habit, selectedDay)} onEdit={() => openEditHabit(habit)} rate={monthStats.perHabit.find(h => h.id === habit.id)?.rate ?? 0} />)}
+          {activeHabits.slice(0, 8).map((habit, i) => <HabitRow key={habit.id} habit={habit} done={isDone(habit.id, selectedDay)} onToggle={() => toggleCompletion(habit, selectedDay)} onEdit={() => openEditHabit(habit)} canEdit={!user || habit.user_id === user.id} ownerName={members.find(m => m.user_id === habit.user_id)?.display_name} rate={monthStats.perHabit.find(h => h.id === habit.id)?.rate ?? 0} />)}
           {!activeHabits.length && <EmptyState title="Start with one small habit" text="Add your first habit to begin tracking your progress." action={openAddHabit}/>}
         </div>
         {activeHabits.length > 8 && <button className="panel-footer-link" onClick={() => document.querySelector('[data-nav="My Habits"]')?.click()}>View all {activeHabits.length} habits <ChevronRight size={15}/></button>}
@@ -528,13 +551,13 @@ function DashboardView({ activeHabits, habits, monthStats, selectedMonth, setSel
   </div>;
 }
 
-function HabitRow({ habit, done, onToggle, onEdit, rate }) {
+function HabitRow({ habit, done, onToggle, onEdit, rate, canEdit = true, ownerName }) {
   return <div className={`habit-row ${done ? "is-done" : ""}`}>
     <div className="habit-emoji" style={{ background: `${habit.color || "#2b9565"}20` }}>{habit.emoji || "✨"}</div>
-    <div className="habit-row-info"><strong>{habit.name}</strong><span>{habit.target || habit.category || "Daily habit"}</span></div>
+    <div className="habit-row-info"><strong>{habit.name}</strong><span>{habit.target || habit.category || "Daily habit"} · {habit.cadence === "weekly" ? `Weekly · ${habit.weekly_target || 3}×` : habit.cadence === "ongoing" ? "Ongoing" : "Daily"}{ownerName ? ` · ${ownerName}` : ""}</span></div>
     <div className="habit-rate"><span>{rate}%</span><div className="habit-mini-bar"><span style={{ width: `${rate}%` }}/></div></div>
     <button className={`check-button ${done ? "checked" : ""}`} onClick={onToggle} aria-label={done ? `Mark ${habit.name} incomplete` : `Mark ${habit.name} complete`}>{done && <Check size={16}/>}</button>
-    <button className="row-more" title="Edit habit" onClick={onEdit}><MoreHorizontal size={18}/></button>
+    {canEdit && <button className="row-more" title="Edit habit" onClick={onEdit}><MoreHorizontal size={18}/></button>}
   </div>;
 }
 
@@ -558,23 +581,23 @@ function CalendarGrid({ selectedMonth, selectedDay, setSelectedDay, activeHabits
   </div>;
 }
 
-function HabitsView({ habits, isDone, selectedDay, setSelectedDay, toggleCompletion, openAddHabit, openEditHabit, deleteHabit, toggleHabitActive }) {
+function HabitsView({ habits, currentUserId, members, isDone, selectedDay, setSelectedDay, toggleCompletion, openAddHabit, openEditHabit, deleteHabit, toggleHabitActive }) {
   const active = habits.filter(h => h.active !== false);
   const paused = habits.filter(h => h.active === false);
   return <div className="page-content">
     <div className="section-intro"><div><h2>Your habit library</h2><p>Keep the routines that matter. Adjust them as life changes.</p></div><button className="primary-button" onClick={openAddHabit}><Plus size={17}/> New habit</button></div>
     <div className="habit-summary-strip"><div><strong>{active.length}</strong><span>Active habits</span></div><div><strong>{paused.length}</strong><span>Paused</span></div><div><strong>{active.filter(h => isDone(h.id, selectedDay)).length}</strong><span>Done today</span></div><div className="summary-date"><CalendarDays size={17}/><input type="date" value={localDateKey(selectedDay)} onChange={e => e.target.value && setSelectedDay(new Date(`${e.target.value}T12:00:00`))}/></div></div>
-    <div className="habit-cards-grid">{active.map((h,i) => <HabitCard key={h.id} habit={h} index={i} done={isDone(h.id, selectedDay)} onToggle={() => toggleCompletion(h, selectedDay)} onEdit={() => openEditHabit(h)} onDelete={() => deleteHabit(h)} onPause={() => toggleHabitActive(h)}/>)}</div>
-    {paused.length > 0 && <><div className="subsection-heading"><h3>Paused habits</h3><span>{paused.length}</span></div><div className="habit-cards-grid">{paused.map((h,i) => <HabitCard key={h.id} habit={h} index={i} done={false} onToggle={() => {}} onEdit={() => openEditHabit(h)} onDelete={() => deleteHabit(h)} onPause={() => toggleHabitActive(h)} paused/>)}</div></>}
+    <div className="habit-cards-grid">{active.map((h,i) => <HabitCard key={h.id} habit={h} index={i} done={isDone(h.id, selectedDay)} weeklyDone={eachDayOfInterval({start:startOfWeek(today),end:today}).filter(day=>isDone(h.id,day)).length} ownerName={members?.find(m=>m.user_id===h.user_id)?.display_name} canManage={!currentUserId || h.user_id===currentUserId} onToggle={() => toggleCompletion(h, selectedDay)} onEdit={() => openEditHabit(h)} onDelete={() => deleteHabit(h)} onPause={() => toggleHabitActive(h)}/>)}</div>
+    {paused.length > 0 && <><div className="subsection-heading"><h3>Paused habits</h3><span>{paused.length}</span></div><div className="habit-cards-grid">{paused.map((h,i) => <HabitCard key={h.id} habit={h} index={i} done={false} ownerName={members?.find(m=>m.user_id===h.user_id)?.display_name} canManage={!currentUserId || h.user_id===currentUserId} onToggle={() => {}} onEdit={() => openEditHabit(h)} onDelete={() => deleteHabit(h)} onPause={() => toggleHabitActive(h)} paused/>)}</div></>}
   </div>;
 }
 
-function HabitCard({ habit, index, done, onToggle, onEdit, onDelete, onPause, paused }) {
+function HabitCard({ habit, index, done, onToggle, onEdit, onDelete, onPause, paused, canManage = true, ownerName, weeklyDone = 0 }) {
   return <div className={`habit-card ${paused ? "paused" : ""}`}>
-    <div className="habit-card-top"><div className="habit-card-emoji" style={{ background: `${habit.color || PALETTE[index % PALETTE.length]}20` }}>{habit.emoji || "✨"}</div><button className="icon-button" onClick={onEdit} title="Edit"><Pencil size={16}/></button></div>
+    <div className="habit-card-top"><div className="habit-card-emoji" style={{ background: `${habit.color || PALETTE[index % PALETTE.length]}20` }}>{habit.emoji || "✨"}</div>{canManage && <button className="icon-button" onClick={onEdit} title="Edit"><Pencil size={16}/></button>}</div>
     <div className="habit-card-title"><h3>{habit.name}</h3><span className="category-pill">{habit.category || "Personal"}</span></div>
-    <p>{habit.target || "A small step, repeated consistently."}</p>
-    <div className="habit-card-bottom"><button className={`check-button large ${done ? "checked" : ""}`} disabled={paused} onClick={onToggle}>{done && <Check size={16}/>}</button><span>{paused ? "Paused" : done ? "Completed" : "Not completed"}</span><div className="habit-card-actions"><button title={paused ? "Resume" : "Pause"} onClick={onPause}>{paused ? <Activity size={16}/> : <Moon size={16}/>}</button><button title="Delete" onClick={onDelete}><Trash2 size={16}/></button></div></div>
+    <p>{habit.target || "A small step, repeated consistently."}</p><div className="habit-meta-pills"><span>{habit.cadence === "weekly" ? `This week · ${weeklyDone}/${habit.weekly_target || 3} days` : habit.cadence === "ongoing" ? "Ongoing · no end date" : "Daily"}</span>{ownerName && <span>By {ownerName}</span>}</div>
+    <div className="habit-card-bottom"><button className={`check-button large ${done ? "checked" : ""}`} disabled={paused} onClick={onToggle}>{done && <Check size={16}/>}</button><span>{paused ? "Paused" : done ? "Completed" : "Not completed"}</span>{canManage && <div className="habit-card-actions"><button title={paused ? "Resume" : "Pause"} onClick={onPause}>{paused ? <Activity size={16}/> : <Moon size={16}/>}</button><button title="Delete" onClick={onDelete}><Trash2 size={16}/></button></div>}</div>
   </div>;
 }
 
@@ -601,9 +624,9 @@ function StatisticsView({ monthStats, weekData, dailyTrend, pieData, activeHabit
 
 function SettingsView({ user, darkMode, setDarkMode, signOut, demoMode }) {
   return <div className="page-content settings-page"><div className="section-intro"><div><h2>Settings & preferences</h2><p>A few simple controls to make this space your own.</p></div></div>
-    <section className="panel settings-panel"><div className="settings-section-title"><div className="settings-icon"><UserRound size={19}/></div><div><h3>Account</h3><p>Your personal Habit Grove account</p></div></div><div className="settings-row"><div><strong>Email address</strong><span>{user?.email || "Preview mode — no account connected"}</span></div>{user && <span className="verified-pill"><ShieldCheck size={13}/> Signed in</span>}</div><div className="settings-row"><div><strong>Data sync</strong><span>{demoMode ? "Preview only. Configure Supabase to sync across devices." : "Your habits and completions are saved to your cloud database."}</span></div><span className={`connection-pill ${demoMode?"offline":"online"}`}><span/>{demoMode?"Not connected":"Connected"}</span></div>{user && <div className="settings-row"><div><strong>Sign out</strong><span>Sign out of this device.</span></div><button className="secondary-button" onClick={signOut}><LogOut size={15}/> Sign out</button></div>}</section>
+    <section className="panel settings-panel"><div className="settings-section-title"><div className="settings-icon"><UserRound size={19}/></div><div><h3>Account</h3><p>Your personal WinterArc Challenge account</p></div></div><div className="settings-row"><div><strong>Email address</strong><span>{user?.email || "Preview mode — no account connected"}</span></div>{user && <span className="verified-pill"><ShieldCheck size={13}/> Signed in</span>}</div><div className="settings-row"><div><strong>Data sync</strong><span>{demoMode ? "Preview only. Configure Supabase to sync across devices." : "Your habits and completions are saved to your cloud database."}</span></div><span className={`connection-pill ${demoMode?"offline":"online"}`}><span/>{demoMode?"Not connected":"Connected"}</span></div>{user && <div className="settings-row"><div><strong>Sign out</strong><span>Sign out of this device.</span></div><button className="secondary-button" onClick={signOut}><LogOut size={15}/> Sign out</button></div>}</section>
     <section className="panel settings-panel"><div className="settings-section-title"><div className="settings-icon"><Sun size={19}/></div><div><h3>Appearance</h3><p>Choose the look that feels comfortable.</p></div></div><div className="settings-row"><div><strong>Dark mode</strong><span>Use a darker theme for low-light environments.</span></div><button className={`switch ${darkMode?"on":""}`} onClick={()=>setDarkMode(v=>!v)} aria-label="Toggle dark mode"><i/></button></div></section>
-    <section className="panel settings-panel"><div className="settings-section-title"><div className="settings-icon"><ShieldCheck size={19}/></div><div><h3>Privacy & data</h3><p>Your habits belong to you.</p></div></div><p className="privacy-copy">Each signed-in account can only read and change its own habits and completion records. This app uses Supabase authentication and row-level security (RLS). Never put a Supabase service-role key in frontend code.</p></section>
+    <section className="panel settings-panel"><div className="settings-section-title"><div className="settings-icon"><ShieldCheck size={19}/></div><div><h3>Privacy & data</h3><p>Your habits belong to you.</p></div></div><p className="privacy-copy">Only the two UUIDs listed in challenge_members can access shared challenge data. Both participants can check off either person’s tasks; only the habit owner can edit or delete a habit. Keep public sign-ups disabled and never put a Supabase service-role key in frontend code.</p></section>
     <section className="panel setup-instructions"><div className="setup-icon"><Cloud size={21}/></div><div><h3>Connect your cloud database</h3><p>Follow the README included with this project to configure Supabase, apply the database schema, and enable account sign-in and cross-device syncing.</p></div></section>
   </div>;
 }
@@ -615,6 +638,8 @@ function HabitModal({ form, setForm, onSave, onClose, error, editing }) {
     <label>Habit name<input autoFocus maxLength={80} value={form.name} onChange={e=>setForm(v=>({...v,name:e.target.value}))} placeholder="e.g. Read for 15 minutes" required/></label>
     <label>Why does it matter? <span className="optional-label">Optional</span><input maxLength={120} value={form.target} onChange={e=>setForm(v=>({...v,target:e.target.value}))} placeholder="e.g. Learn something new every day"/></label>
     <label>Category<select value={form.category} onChange={e=>setForm(v=>({...v,category:e.target.value}))}>{["Personal","Health","Learning","Career","Mindfulness","Productivity","Relationships","Finance"].map(c=><option key={c}>{c}</option>)}</select></label>
+    <label>Habit schedule<select value={form.cadence || "daily"} onChange={e=>setForm(v=>({...v,cadence:e.target.value}))}><option value="daily">Daily — every day</option><option value="weekly">Weekly — choose days per week</option><option value="ongoing">Ongoing — no end date</option></select></label>
+    {form.cadence === "weekly" && <label>Weekly target<select value={form.weekly_target || 3} onChange={e=>setForm(v=>({...v,weekly_target:Number(e.target.value)}))}>{[1,2,3,4,5,6,7].map(n=><option key={n} value={n}>{n} {n===1?"day":"days"} per week</option>)}</select></label>}
     <div className="emoji-field"><span className="field-label">Choose an icon</span><div className="emoji-options">{emojis.map(e=><button type="button" key={e} className={form.emoji===e?"selected":""} onClick={()=>setForm(v=>({...v,emoji:e}))}>{e}</button>)}</div></div>
     {error && <div className="form-error">{error}</div>}
     <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button"><Check size={16}/>{editing?"Save changes":"Create habit"}</button></div>
@@ -624,5 +649,4 @@ function HabitModal({ form, setForm, onSave, onClose, error, editing }) {
 function EmptyState({ title, text, action }) {
   return <div className="empty-state"><div className="empty-icon"><Leaf size={24}/></div><h3>{title}</h3><p>{text}</p><button className="primary-button" onClick={action}><Plus size={16}/> Add a habit</button></div>;
 }
-
 export default App;
