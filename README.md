@@ -6,7 +6,7 @@ A premium winter-inspired, mobile-first two-person habit challenge built with Re
 
 The login screen intentionally has **no public registration link**. It accepts either a participant username (`Harish` or `SHYAM`) or the user's email address in Supabase Auth. Usernames are mapped to the internal aliases `harish@winterarc.invalid` and `shyam@winterarc.invalid`; email addresses are passed directly to Supabase Auth. Create the two accounts yourself in Supabase Authentication (Dashboard → Authentication → Users → Add user) and set each password there. Passwords are managed by Supabase Auth and must never be inserted into the application database or frontend. Do not enable public sign-ups.
 
-The schema adds a `challenge_members` allowlist. Both listed participants can see both people’s habits and completion history, and either person can check/uncheck a challenge task. Only the habit owner can edit, pause, or delete that habit. The two-user limit depends on keeping exactly two rows in `challenge_members` and disabling public sign-ups in Supabase.
+The schema adds a `challenge_members` allowlist. Harish and Shyam each have an independent habit list; the app creates starter habits separately when each account has no habits yet. Both listed participants can see each other's habits and completion history, and either person can check/uncheck a challenge task. Only the habit owner can edit, pause, or delete that habit. The two-user limit depends on keeping exactly two rows in `challenge_members` and disabling public sign-ups in Supabase.
 
 ## 1. Requirements
 
@@ -35,6 +35,21 @@ insert into public.challenge_members (user_id, display_name, username) values
 ```
 
 Keep exactly two rows in this table. Never store passwords in `challenge_members`.
+
+### Troubleshooting: habit insert blocked by row-level security
+
+The insert policy only allows signed-in users whose Supabase Auth UUID is present in `public.challenge_members`. Check that the login accounts are registered and that the app is configured for this same Supabase project:
+
+```sql
+select u.id, u.email, cm.display_name, cm.username,
+       (cm.user_id is not null) as registered
+from auth.users u
+left join public.challenge_members cm on cm.user_id = u.id
+where lower(u.email) in ('harish@winterarc.invalid', 'shyam@winterarc.invalid');
+```
+
+If you used real email addresses, replace the two example aliases in the query with those addresses. If the logged-in user has `registered = false`, insert that user's exact `id` into `public.challenge_members`. Do not disable row-level security; reapply `supabase/schema.sql` if the policies are missing.
+
 6. Under **Project Settings → API Keys**, copy the Project URL and publishable key (or legacy anon public key).
 7. Copy `.env.example` to `.env` and fill in your values:
 

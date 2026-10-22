@@ -122,9 +122,15 @@ function App() {
       setLoadingData(false);
       return;
     }
-    setMembers(memberResult.data || []);
+    const loadedMembers = memberResult.data || [];
+    if (!loadedMembers.some(member => member.user_id === user.id)) {
+      setAuthError("This account is not registered in public.challenge_members. Add this user's Supabase Auth ID to that table, then sign out and back in.");
+      setLoadingData(false);
+      return;
+    }
+    setMembers(loadedMembers);
     let fetchedHabits = habitResult.data || [];
-    if (!fetchedHabits.length) {
+    if (!fetchedHabits.some(habit => habit.user_id === user.id)) {
       const rows = DEFAULT_HABITS.map((h, i) => ({
         user_id: user.id, name: h.name, category: h.category, emoji: h.emoji,
         color: h.color || PALETTE[i % PALETTE.length], target: h.target,
@@ -136,7 +142,7 @@ function App() {
         setLoadingData(false);
         return;
       }
-      fetchedHabits = data || [];
+      fetchedHabits = [...fetchedHabits, ...(data || [])];
     }
     setHabits(fetchedHabits);
     const map = {};
@@ -582,13 +588,31 @@ function CalendarGrid({ selectedMonth, selectedDay, setSelectedDay, activeHabits
 }
 
 function HabitsView({ habits, currentUserId, members, isDone, selectedDay, setSelectedDay, toggleCompletion, openAddHabit, openEditHabit, deleteHabit, toggleHabitActive }) {
-  const active = habits.filter(h => h.active !== false);
-  const paused = habits.filter(h => h.active === false);
+  const owners = currentUserId
+    ? (members || []).map(member => member)
+    : [{ user_id: null, display_name: "Your" }];
+  const groups = owners.map(owner => {
+    const ownerHabits = habits.filter(habit => (habit.user_id || null) === owner.user_id);
+    return {
+      owner,
+      isCurrentUser: !currentUserId || owner.user_id === currentUserId,
+      active: ownerHabits.filter(habit => habit.active !== false),
+      paused: ownerHabits.filter(habit => habit.active === false)
+    };
+  });
+  const ownGroup = groups.find(group => group.isCurrentUser);
+  const active = ownGroup?.active || [];
+  const paused = ownGroup?.paused || [];
   return <div className="page-content">
     <div className="section-intro"><div><h2>Your habit library</h2><p>Keep the routines that matter. Adjust them as life changes.</p></div><button className="primary-button" onClick={openAddHabit}><Plus size={17}/> New habit</button></div>
     <div className="habit-summary-strip"><div><strong>{active.length}</strong><span>Active habits</span></div><div><strong>{paused.length}</strong><span>Paused</span></div><div><strong>{active.filter(h => isDone(h.id, selectedDay)).length}</strong><span>Done today</span></div><div className="summary-date"><CalendarDays size={17}/><input type="date" value={localDateKey(selectedDay)} onChange={e => e.target.value && setSelectedDay(new Date(`${e.target.value}T12:00:00`))}/></div></div>
-    <div className="habit-cards-grid">{active.map((h,i) => <HabitCard key={h.id} habit={h} index={i} done={isDone(h.id, selectedDay)} weeklyDone={eachDayOfInterval({start:startOfWeek(today),end:today}).filter(day=>isDone(h.id,day)).length} ownerName={members?.find(m=>m.user_id===h.user_id)?.display_name} canManage={!currentUserId || h.user_id===currentUserId} onToggle={() => toggleCompletion(h, selectedDay)} onEdit={() => openEditHabit(h)} onDelete={() => deleteHabit(h)} onPause={() => toggleHabitActive(h)}/>)}</div>
-    {paused.length > 0 && <><div className="subsection-heading"><h3>Paused habits</h3><span>{paused.length}</span></div><div className="habit-cards-grid">{paused.map((h,i) => <HabitCard key={h.id} habit={h} index={i} done={false} ownerName={members?.find(m=>m.user_id===h.user_id)?.display_name} canManage={!currentUserId || h.user_id===currentUserId} onToggle={() => {}} onEdit={() => openEditHabit(h)} onDelete={() => deleteHabit(h)} onPause={() => toggleHabitActive(h)} paused/>)}</div></>}
+    {groups.map(({ owner, isCurrentUser, active: ownerActive, paused: ownerPaused }) => <section key={owner.user_id || "preview"} className="owner-habit-group">
+      <div className="subsection-heading"><h3>{isCurrentUser ? "Your habits" : `${owner.display_name}'s habits`}</h3><span>{ownerActive.length + ownerPaused.length}</span></div>
+      {ownerActive.length > 0
+        ? <div className="habit-cards-grid">{ownerActive.map((h,i) => <HabitCard key={h.id} habit={h} index={i} done={isDone(h.id, selectedDay)} weeklyDone={eachDayOfInterval({start:startOfWeek(today),end:today}).filter(day=>isDone(h.id,day)).length} ownerName={isCurrentUser ? null : owner.display_name} canManage={isCurrentUser} onToggle={() => toggleCompletion(h, selectedDay)} onEdit={() => openEditHabit(h)} onDelete={() => deleteHabit(h)} onPause={() => toggleHabitActive(h)}/>)}</div>
+        : <p className="empty-owner-habits">{isCurrentUser ? "Add a habit to start building your routine." : "No habits added yet."}</p>}
+      {ownerPaused.length > 0 && <><div className="subsection-heading"><h3>Paused</h3><span>{ownerPaused.length}</span></div><div className="habit-cards-grid">{ownerPaused.map((h,i) => <HabitCard key={h.id} habit={h} index={i} done={false} ownerName={isCurrentUser ? null : owner.display_name} canManage={isCurrentUser} onToggle={() => {}} onEdit={() => openEditHabit(h)} onDelete={() => deleteHabit(h)} onPause={() => toggleHabitActive(h)} paused/>)}</div></>}
+    </section>)}
   </div>;
 }
 
