@@ -91,29 +91,36 @@ drop policy if exists "Users can delete their own habits" on public.habits;
 create policy "Users can delete their own habits" on public.habits
 for delete to authenticated using (auth.uid() = user_id and public.is_winterarc_member(auth.uid()));
 
--- Either member may check/uncheck either participant's task; completion is attributed to the habit owner.
+-- Participants can view shared completion status, but only each habit owner can change it.
 drop policy if exists "Users can read their own completions" on public.habit_completions;
 drop policy if exists "WinterArc members can view challenge completions" on public.habit_completions;
 create policy "WinterArc members can view challenge completions" on public.habit_completions
 for select to authenticated using (public.is_winterarc_member(auth.uid()) and public.is_winterarc_member(user_id));
 drop policy if exists "Users can create their own completions" on public.habit_completions;
-create policy "WinterArc members can check challenge tasks" on public.habit_completions
+drop policy if exists "WinterArc members can check challenge tasks" on public.habit_completions;
+create policy "Users can create their own completions" on public.habit_completions
 for insert to authenticated with check (
-  public.is_winterarc_member(auth.uid())
-  and public.is_winterarc_member(user_id)
-  and exists (select 1 from public.habits h where h.id = habit_id and h.user_id = habit_completions.user_id)
+  auth.uid() = user_id
+  and public.is_winterarc_member(auth.uid())
+  and exists (select 1 from public.habits h where h.id = habit_id and h.user_id = auth.uid())
 );
 drop policy if exists "Users can update their own completions" on public.habit_completions;
 drop policy if exists "WinterArc members can update challenge completions" on public.habit_completions;
-create policy "WinterArc members can update challenge completions" on public.habit_completions
-for update to authenticated using (public.is_winterarc_member(auth.uid()) and public.is_winterarc_member(user_id))
+create policy "Users can update their own completions" on public.habit_completions
+for update to authenticated using (auth.uid() = user_id and public.is_winterarc_member(auth.uid()))
 with check (
-  public.is_winterarc_member(auth.uid()) and public.is_winterarc_member(user_id)
-  and exists (select 1 from public.habits h where h.id = habit_id and h.user_id = habit_completions.user_id)
+  auth.uid() = user_id
+  and public.is_winterarc_member(auth.uid())
+  and exists (select 1 from public.habits h where h.id = habit_id and h.user_id = auth.uid())
 );
 drop policy if exists "Users can delete their own completions" on public.habit_completions;
-create policy "WinterArc members can delete challenge completions" on public.habit_completions
-for delete to authenticated using (public.is_winterarc_member(auth.uid()) and public.is_winterarc_member(user_id));
+drop policy if exists "WinterArc members can delete challenge completions" on public.habit_completions;
+create policy "Users can delete their own completions" on public.habit_completions
+for delete to authenticated using (
+  auth.uid() = user_id
+  and public.is_winterarc_member(auth.uid())
+  and exists (select 1 from public.habits h where h.id = habit_id and h.user_id = auth.uid())
+);
 
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$ begin new.updated_at = now(); return new; end; $$;

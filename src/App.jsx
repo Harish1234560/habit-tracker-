@@ -172,9 +172,8 @@ function App() {
     }
   }, [user, demoMode, loadData]);
 
-  const activeHabits = useMemo(() => habits.filter(h => h.active !== false), [habits]);
-  const myHabits = useMemo(() => activeHabits.filter(h => !user || h.user_id === user.id), [activeHabits, user]);
-  const partnerHabits = useMemo(() => activeHabits.filter(h => user && h.user_id && h.user_id !== user.id), [activeHabits, user]);
+  const activeHabits = useMemo(() => habits.filter(h => h.active !== false && (!user || h.user_id === user.id)), [habits, user]);
+  const myHabits = activeHabits;
   const monthStart = startOfMonth(selectedMonth);
   const monthEnd = endOfMonth(selectedMonth);
   const monthDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
@@ -268,6 +267,10 @@ function App() {
   }
 
   async function toggleCompletion(habit, date) {
+    if (user && habit.user_id !== user.id) {
+      showToast("You can only update completion for your own habits.");
+      return;
+    }
     const key = `${habit.id}:${localDateKey(date)}`;
     const next = !completions[key];
     setCompletions(prev => ({ ...prev, [key]: next }));
@@ -417,12 +420,10 @@ function App() {
         {authError && <div className="inline-alert"><CircleHelp size={17}/><span>{authError}</span><button onClick={() => setAuthError("")}><X size={16}/></button></div>}
 
         {activeView === "Dashboard" && <DashboardView
-          activeHabits={activeHabits} habits={habits} monthStats={monthStats} selectedMonth={selectedMonth}
+          activeHabits={user ? myHabits : activeHabits} habits={user ? habits.filter(h => h.user_id === user.id) : habits} selectedMonth={selectedMonth}
           setSelectedMonth={setSelectedMonth} monthDays={monthDays} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
-          isDone={isDone} countOnDate={countOnDate} toggleCompletion={toggleCompletion}
-          weekData={weekData} dailyTrend={dailyTrend} pieData={pieData} streak={streak}
+          isDone={isDone} toggleCompletion={toggleCompletion}
           openAddHabit={openAddHabit} openEditHabit={openEditHabit} loadingData={loadingData} user={user} members={members}
-          saveState={saveState} isSameMonth={isSameMonth}
         />}
         {activeView === "My Habits" && <HabitsView habits={habits} currentUserId={user?.id} members={members} isDone={isDone} selectedDay={selectedDay} setSelectedDay={setSelectedDay} toggleCompletion={toggleCompletion} openAddHabit={openAddHabit} openEditHabit={openEditHabit} deleteHabit={deleteHabit} toggleHabitActive={toggleHabitActive}/>}
         {activeView === "Calendar" && <CalendarView selectedMonth={selectedMonth} setSelectedMonth={setSelectedMonth} monthDays={monthDays} selectedDay={selectedDay} setSelectedDay={setSelectedDay} activeHabits={activeHabits} countOnDate={countOnDate} isDone={isDone} toggleCompletion={toggleCompletion}/>}
@@ -487,9 +488,48 @@ function StatCard({ icon: Icon, label, value, detail, color = "green", progress,
   </div>;
 }
 
-function DashboardView({ activeHabits, habits, monthStats, selectedMonth, setSelectedMonth, monthDays, selectedDay, setSelectedDay, isDone, countOnDate, toggleCompletion, weekData, dailyTrend, pieData, streak, openAddHabit, openEditHabit, loadingData, saveState, user, members }) {
+function DashboardView({ activeHabits, habits, selectedMonth, setSelectedMonth, monthDays, selectedDay, setSelectedDay, isDone, toggleCompletion, openAddHabit, openEditHabit, loadingData, user, members }) {
   const todayHabits = activeHabits;
-  const completedToday = countOnDate(today);
+  const countOnDate = useCallback(date => activeHabits.filter(habit => isDone(habit.id, date)).length, [activeHabits, isDone]);
+  const monthStats = useMemo(() => {
+    const elapsedDays = monthDays.filter(day => day <= today).length;
+    const perHabit = activeHabits.map(habit => {
+      const done = monthDays.filter(day => day <= today && isDone(habit.id, day)).length;
+      return { ...habit, done, total: elapsedDays, rate: percent(done, elapsedDays) };
+    });
+    const done = perHabit.reduce((total, habit) => total + habit.done, 0);
+    const possible = activeHabits.length * elapsedDays;
+    return { done, possible, rate: percent(done, possible), perHabit, elapsed: elapsedDays };
+  }, [activeHabits, monthDays, isDone]);
+  const weekData = useMemo(() => Array.from({ length: 4 }, (_, i) => {
+    const end = subDays(today, i * 7);
+    const start = subDays(end, 6);
+    let done = 0, possible = 0;
+    eachDayOfInterval({ start, end }).forEach(day => {
+      if (day <= today) {
+        done += countOnDate(day);
+        possible += activeHabits.length;
+      }
+    });
+    return { week: i === 0 ? "This week" : `${i} wk${i > 1 ? "s" : ""} ago`, rate: percent(done, possible), done, possible };
+  }).reverse(), [activeHabits.length, countOnDate]);
+  const dailyTrend = useMemo(() => Array.from({ length: 14 }, (_, i) => {
+    const day = subDays(today, 13 - i);
+    return { day: format(day, "MMM d"), completed: countOnDate(day), rate: percent(countOnDate(day), activeHabits.length) };
+  }), [activeHabits.length, countOnDate]);
+  const streak = useMemo(() => {
+    let days = 0;
+    let cursor = today;
+    if (activeHabits.length && countOnDate(cursor) === 0) cursor = subDays(cursor, 1);
+    while (days < 366 && activeHabits.length && countOnDate(cursor) > 0) {
+      days++;
+      cursor = subDays(cursor, 1);
+    }
+    return days;
+  }, [activeHabits.length, countOnDate]);
+  const pieData = useMemo(() => monthStats.perHabit.filter(habit => habit.rate > 0).map((habit, i) => ({
+    name: habit.name, value: habit.rate, color: habit.color || PALETTE[i % PALETTE.length]
+  })), [monthStats.perHabit]);
   const topHabit = [...monthStats.perHabit].sort((a,b) => b.rate - a.rate)[0];
   const weekTotal = weekData[weekData.length - 1];
   return <div className="page-content">
@@ -589,7 +629,11 @@ function CalendarGrid({ selectedMonth, selectedDay, setSelectedDay, activeHabits
 
 function HabitsView({ habits, currentUserId, members, isDone, selectedDay, setSelectedDay, toggleCompletion, openAddHabit, openEditHabit, deleteHabit, toggleHabitActive }) {
   const owners = currentUserId
-    ? (members || []).map(member => member)
+    ? (members || []).map(member => member).sort((a, b) => {
+      if (a.user_id === currentUserId) return -1;
+      if (b.user_id === currentUserId) return 1;
+      return 0;
+    })
     : [{ user_id: null, display_name: "Your" }];
   const groups = owners.map(owner => {
     const ownerHabits = habits.filter(habit => (habit.user_id || null) === owner.user_id);
@@ -621,7 +665,7 @@ function HabitCard({ habit, index, done, onToggle, onEdit, onDelete, onPause, pa
     <div className="habit-card-top"><div className="habit-card-emoji" style={{ background: `${habit.color || PALETTE[index % PALETTE.length]}20` }}>{habit.emoji || "✨"}</div>{canManage && <button className="icon-button" onClick={onEdit} title="Edit"><Pencil size={16}/></button>}</div>
     <div className="habit-card-title"><h3>{habit.name}</h3><span className="category-pill">{habit.category || "Personal"}</span></div>
     <p>{habit.target || "A small step, repeated consistently."}</p><div className="habit-meta-pills"><span>{habit.cadence === "weekly" ? `This week · ${weeklyDone}/${habit.weekly_target || 3} days` : habit.cadence === "ongoing" ? "Ongoing · no end date" : "Daily"}</span>{ownerName && <span>By {ownerName}</span>}</div>
-    <div className="habit-card-bottom"><button className={`check-button large ${done ? "checked" : ""}`} disabled={paused} onClick={onToggle}>{done && <Check size={16}/>}</button><span>{paused ? "Paused" : done ? "Completed" : "Not completed"}</span>{canManage && <div className="habit-card-actions"><button title={paused ? "Resume" : "Pause"} onClick={onPause}>{paused ? <Activity size={16}/> : <Moon size={16}/>}</button><button title="Delete" onClick={onDelete}><Trash2 size={16}/></button></div>}</div>
+    <div className="habit-card-bottom"><button className={`check-button large ${done ? "checked" : ""}`} disabled={paused || !canManage} aria-label={`${habit.name}: ${done ? "completed" : "not completed"}`} onClick={onToggle}>{done && <Check size={16}/>}</button><span>{paused ? "Paused" : done ? "Completed" : "Not completed"}</span>{canManage && <div className="habit-card-actions"><button title={paused ? "Resume" : "Pause"} onClick={onPause}>{paused ? <Activity size={16}/> : <Moon size={16}/>}</button><button title="Delete" onClick={onDelete}><Trash2 size={16}/></button></div>}</div>
   </div>;
 }
 

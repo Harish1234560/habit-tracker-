@@ -1,12 +1,12 @@
 # WinterArc Challenge — React + Supabase
 
-A premium winter-inspired, mobile-first two-person habit challenge built with React + Vite + Supabase. It includes daily, weekly-target, and ongoing habits; shared participant visibility; shared task check-offs; completion history; calendar; statistics; and cloud syncing.
+A premium winter-inspired, mobile-first two-person habit challenge built with React + Vite + Supabase. It includes daily, weekly-target, and ongoing habits; shared read-only visibility of each participant's completion status; completion history; calendar; statistics; and cloud syncing.
 
 ## Important security setup for the two-person challenge
 
 The login screen intentionally has **no public registration link**. It accepts either a participant username (`Harish` or `SHYAM`) or the user's email address in Supabase Auth. Usernames are mapped to the internal aliases `harish@winterarc.invalid` and `shyam@winterarc.invalid`; email addresses are passed directly to Supabase Auth. Create the two accounts yourself in Supabase Authentication (Dashboard → Authentication → Users → Add user) and set each password there. Passwords are managed by Supabase Auth and must never be inserted into the application database or frontend. Do not enable public sign-ups.
 
-The schema adds a `challenge_members` allowlist. Harish and Shyam each have an independent habit list; the app creates starter habits separately when each account has no habits yet. Both listed participants can see each other's habits and completion history, and either person can check/uncheck a challenge task. Only the habit owner can edit, pause, or delete that habit. The two-user limit depends on keeping exactly two rows in `challenge_members` and disabling public sign-ups in Supabase.
+The schema adds a `challenge_members` allowlist. Harish and Shyam each have an independent habit list; the app creates starter habits separately when each account has no habits yet. The dashboard shows only the signed-in participant's habits and personal statistics. In My Habits, both participants can see each other's completion status, but only the habit owner can check off, edit, pause, or delete that habit. The two-user limit depends on keeping exactly two rows in `challenge_members` and disabling public sign-ups in Supabase.
 
 ## 1. Requirements
 
@@ -35,6 +35,7 @@ insert into public.challenge_members (user_id, display_name, username) values
 ```
 
 Keep exactly two rows in this table. Never store passwords in `challenge_members`.
+If you already applied an earlier version of the schema, run the updated `supabase/schema.sql` again to apply the owner-only completion permissions.
 
 ### Troubleshooting: habit insert blocked by row-level security
 
